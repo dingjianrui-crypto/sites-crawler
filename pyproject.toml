@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-nsfw-discovery"
+version = "0.1.0"
+description = "CLI for discovering AI-generated adult NSFW websites and public contact metadata."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "fastapi>=0.115",
+  "httpx>=0.27",
+  "jinja2>=3.1",
+  "pydantic>=2.7",
+  "rich>=13.7",
+  "uvicorn>=0.30",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2",
+  "respx>=0.21",
+]
+
+[project.scripts]
+nsfw-discovery = "nsfw_discovery.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

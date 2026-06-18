@@ -1,0 +1,83 @@
+from nsfw_discovery.models import Classification, Contacts, ExternalCandidate, PageContent, SearchResult
+from nsfw_discovery.storage import Database
+
+
+def test_database_persists_search_page_and_classification(tmp_path) -> None:
+    db_path = tmp_path / "discovery.sqlite"
+    with Database(db_path) as db:
+        db.upsert_search_result(
+            SearchResult(
+                query="AI NSFW generator",
+                title="Example",
+                url="https://example.com",
+                snippet="AI adult generator",
+                domain="example.com",
+            )
+        )
+        assert db.pending_domains(10) == ["example.com"]
+        db.save_page(
+            "example.com",
+            PageContent(
+                url="https://example.com",
+                title="Example",
+                text="AI adult generator",
+                links=[],
+                status_code=200,
+            ),
+        )
+        db.save_classification(
+            "example.com",
+            Classification(
+                provides_ai_nsfw=True,
+                description="Adult AI image generation platform.",
+                confidence="medium",
+                accepted=True,
+            ),
+            Contacts(emails=["support@example.com"]),
+            needs_js_review=False,
+        )
+        rows = db.export_rows()
+        listing = db.list_domains(search="example", has_contact="email")
+        detail = db.domain_detail("example.com")
+    assert rows[0]["domain"] == "example.com"
+    assert rows[0]["contacts"]["emails"] == ["support@example.com"]
+    assert listing["total"] == 1
+    assert listing["items"][0]["domain"] == "example.com"
+    assert detail is not None
+    assert detail["pages"][0]["url"] == "https://example.com"
+
+
+def test_database_queues_external_candidate_as_pending_domain(tmp_path) -> None:
+    db_path = tmp_path / "discovery.sqlite"
+    with Database(db_path) as db:
+        inserted = db.upsert_external_candidate(
+            ExternalCandidate(
+                domain="external.example",
+                url="https://external.example/nsfw-generator",
+                source_domain="seed.example",
+                source_url="https://seed.example/tools",
+                anchor_text="Uncensored AI generator",
+                score=8,
+                reason="ai_terms:ai,generator;nsfw_terms:uncensored",
+                depth=1,
+            )
+        )
+        duplicate = db.upsert_external_candidate(
+            ExternalCandidate(
+                domain="external.example",
+                url="https://external.example/nsfw-generator",
+                source_domain="seed.example",
+                source_url="https://seed.example/tools",
+                anchor_text="Uncensored AI generator",
+                score=8,
+                reason="ai_terms:ai,generator;nsfw_terms:uncensored",
+                depth=1,
+            )
+        )
+        stats = db.stats()
+        pending = db.pending_domains(10)
+    assert inserted
+    assert not duplicate
+    assert pending == ["external.example"]
+    assert stats["external_candidates"] == 1
+    assert stats["external_queued"] == 1
