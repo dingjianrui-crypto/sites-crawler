@@ -75,6 +75,25 @@ def test_database_upserts_search_sources_without_duplicates(tmp_path) -> None:
     assert detail["search_sources"][0]["snippet"] == "Updated snippet"
 
 
+def test_database_tracks_discovery_tasks(tmp_path) -> None:
+    db_path = tmp_path / "discovery.sqlite"
+    with Database(db_path) as db:
+        task_id = db.create_task({"queries": ["AI NSFW generator"], "run_search": False})
+        assert db.has_running_task()
+        db.start_task(task_id)
+        db.update_task_progress(task_id, "Crawling example.com", {"domains_processed": 0})
+        db.finish_task(task_id, "succeeded", {"domains_processed": 1})
+        task = db.get_task(task_id)
+        events = db.task_events(task_id)
+    assert task is not None
+    assert task["status"] == "succeeded"
+    assert task["config"]["run_search"] is False
+    assert task["counters"]["domains_processed"] == 1
+    assert len(events) == 2
+    with Database(db_path) as db:
+        assert not db.has_running_task()
+
+
 def test_database_queues_external_candidate_as_pending_domain(tmp_path) -> None:
     db_path = tmp_path / "discovery.sqlite"
     with Database(db_path) as db:

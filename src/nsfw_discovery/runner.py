@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from .config import Settings
 from .crawler import HtmlCrawler
@@ -39,18 +39,32 @@ class ProgressReporter:
         )
 
 
+class DatabaseTaskReporter(ProgressReporter):
+    def __init__(self, db: Database, task_id: int) -> None:
+        self.db = db
+        self.task_id = task_id
+
+    def start(self) -> None:
+        self.db.start_task(self.task_id)
+
+    def update(self, message: str, counters: RunCounters) -> None:
+        self.db.update_task_progress(self.task_id, message, asdict(counters))
+
+
 async def run_discovery(settings: Settings, db: Database, reporter: ProgressReporter) -> RunCounters:
     counters = RunCounters()
     reporter.start()
     try:
-        if settings.serpapi_api_key:
+        if not settings.run_search:
+            reporter.update("Search discovery disabled; using existing queued domains", counters)
+        elif settings.serpapi_api_key:
             await discover(settings, db, reporter, counters)
         else:
             reporter.update("SERPAPI_API_KEY not set; skipping search discovery", counters)
 
         remaining = settings.max_domains
         while remaining > 0:
-            domains = db.pending_domains(remaining, include_errors=True)
+            domains = db.pending_domains(remaining, include_errors=settings.retry_errors)
             if not domains:
                 break
             reporter.update(f"Queued {len(domains)} domains for crawl/classification", counters)

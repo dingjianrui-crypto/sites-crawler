@@ -55,3 +55,44 @@ def test_dashboard_api_and_html(tmp_path) -> None:
     html = client.get("/")
     assert html.status_code == 200
     assert "example.com" in html.text
+
+
+def test_task_pages_and_api(tmp_path) -> None:
+    db_path = tmp_path / "discovery.sqlite"
+    with Database(db_path) as db:
+        task_id = db.create_task({"queries": ["AI NSFW generator"], "run_search": False})
+        db.start_task(task_id)
+        db.update_task_progress(task_id, "Search discovery disabled", {"search_results": 0})
+        db.finish_task(task_id, "succeeded", {"domains_processed": 0})
+
+    client = TestClient(create_app(db_path))
+    tasks = client.get("/tasks")
+    assert tasks.status_code == 200
+    assert f"#{task_id}" in tasks.text
+
+    new_task = client.get("/tasks/new")
+    assert new_task.status_code == 200
+    assert "AI NSFW generator" in new_task.text
+
+    detail = client.get(f"/tasks/{task_id}")
+    assert detail.status_code == 200
+    assert "Search discovery disabled" in detail.text
+
+    api_detail = client.get(f"/api/tasks/{task_id}")
+    assert api_detail.status_code == 200
+    assert api_detail.json()["status"] == "succeeded"
+    assert len(api_detail.json()["events"]) == 2
+
+    api_events = client.get(f"/api/tasks/{task_id}/events")
+    assert api_events.status_code == 200
+    assert api_events.json()[0]["message"] == "Completed"
+
+
+def test_new_task_page_uses_configured_user_agent(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("NSFW_DISCOVERY_USER_AGENT", "Mozilla/5.0 Configured Browser")
+
+    client = TestClient(create_app(tmp_path / "discovery.sqlite"))
+    response = client.get("/tasks/new")
+
+    assert response.status_code == 200
+    assert "Mozilla/5.0 Configured Browser" in response.text

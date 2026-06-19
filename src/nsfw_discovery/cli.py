@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .config import Settings, load_dotenv
+from .config import Settings, default_user_agent, load_dotenv
 from .runner import ProgressReporter, RunCounters, run_discovery
 from .storage import Database
 
@@ -21,12 +21,6 @@ except ImportError:  # pragma: no cover
     Live = None
     Panel = None
     Table = None
-
-
-DEFAULT_USER_AGENT = (
-    "Mozilla/5.0 (compatible; AI-NSFW-Discovery/0.1; "
-    "+https://localhost/metadata-research)"
-)
 
 
 class RichProgressReporter(ProgressReporter):
@@ -88,7 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--concurrency", type=int, default=5)
     run.add_argument("--timeout", type=float, default=30.0)
     run.add_argument("--retries", type=int, default=3)
-    run.add_argument("--user-agent", default=DEFAULT_USER_AGENT)
+    run.add_argument("--user-agent", default=default_user_agent())
     run.add_argument("--external-depth", type=int, default=1, help="External-link discovery depth. 0 disables it.")
     run.add_argument("--external-score-threshold", type=int, default=4)
     run.add_argument("--max-external-candidates", type=int, default=1000)

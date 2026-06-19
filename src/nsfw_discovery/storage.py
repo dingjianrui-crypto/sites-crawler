@@ -68,6 +68,29 @@ CREATE TABLE IF NOT EXISTS external_candidates (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(domain, source_domain, source_url, url)
 );
+
+CREATE TABLE IF NOT EXISTS discovery_tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  status TEXT NOT NULL DEFAULT 'queued',
+  config_json TEXT NOT NULL,
+  counters_json TEXT NOT NULL DEFAULT '{}',
+  current_message TEXT NOT NULL DEFAULT '',
+  error TEXT NOT NULL DEFAULT '',
+  started_at TEXT,
+  finished_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS discovery_task_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL,
+  level TEXT NOT NULL DEFAULT 'info',
+  message TEXT NOT NULL,
+  counters_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(task_id) REFERENCES discovery_tasks(id) ON DELETE CASCADE
+);
 """
 
 
@@ -265,6 +288,143 @@ class Database:
         meta_keys = {"accepted", "uncertain", "external_candidates", "external_queued"}
         stats["total"] = sum(value for key, value in stats.items() if key not in meta_keys)
         return stats
+
+    def create_task(self, config: dict[str, Any]) -> int:
+        config_json = json.dumps(config, sort_keys=True)
+        with self.conn:
+            cursor = self.conn.execute(
+                """
+                INSERT INTO discovery_tasks(config_json, current_message)
+                VALUES(?, 'Queued')
+                """,
+                (config_json,),
+            )
+        return int(cursor.lastrowid)
+
+    def start_task(self, task_id: int) -> None:
+        with self.conn:
+            self.conn.execute(
+                """
+                UPDATE discovery_tasks
+                SET status='running',
+                    current_message='Starting',
+                    error='',
+                    started_at=COALESCE(started_at, CURRENT_TIMESTAMP),
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE id=?
+                """,
+                (task_id,),
+            )
+
+    def update_task_progress(self, task_id: int, message: str, counters: dict[str, int]) -> None:
+        counters_json = json.dumps(counters, sort_keys=True)
+        with self.conn:
+            self.conn.execute(
+                """
+                UPDATE discovery_tasks
+                SET current_message=?,
+                    counters_json=?,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE id=?
+                """,
+                (message[:1000], counters_json, task_id),
+            )
+            self.conn.execute(
+                """
+                INSERT INTO discovery_task_events(task_id, message, counters_json)
+                VALUES(?, ?, ?)
+                """,
+                (task_id, message[:1000], counters_json),
+            )
+
+    def finish_task(
+        self,
+        task_id: int,
+        status: Literal["succeeded", "failed", "cancelled"],
+        counters: dict[str, int],
+        error: str = "",
+    ) -> None:
+        message = "Completed" if status == "succeeded" else error[:1000] or status.title()
+        with self.conn:
+            self.conn.execute(
+                """
+                UPDATE discovery_tasks
+                SET status=?,
+                    current_message=?,
+                    counters_json=?,
+                    error=?,
+                    finished_at=CURRENT_TIMESTAMP,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE id=?
+                """,
+                (status, message, json.dumps(counters, sort_keys=True), error[:1000], task_id),
+            )
+            self.conn.execute(
+                """
+                INSERT INTO discovery_task_events(task_id, level, message, counters_json)
+                VALUES(?, ?, ?, ?)
+                """,
+                (
+                    task_id,
+                    "error" if status == "failed" else "info",
+                    message,
+                    json.dumps(counters, sort_keys=True),
+                ),
+            )
+
+    def has_running_task(self) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM discovery_tasks WHERE status IN ('queued', 'running') LIMIT 1"
+        ).fetchone()
+        return row is not None
+
+    def get_task(self, task_id: int) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT id, status, config_json, counters_json, current_message, error,
+                   started_at, finished_at, created_at, updated_at
+            FROM discovery_tasks
+            WHERE id=?
+            """,
+            (task_id,),
+        ).fetchone()
+        return self._task_row(row) if row else None
+
+    def list_tasks(self, limit: int = 100) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT id, status, config_json, counters_json, current_message, error,
+                   started_at, finished_at, created_at, updated_at
+            FROM discovery_tasks
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (max(1, min(500, limit)),),
+        ).fetchall()
+        return [self._task_row(row) for row in rows]
+
+    def task_events(self, task_id: int, limit: int = 200) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT id, task_id, level, message, counters_json, created_at
+            FROM discovery_task_events
+            WHERE task_id=?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (task_id, max(1, min(1000, limit))),
+        ).fetchall()
+        return [
+            {
+                "id": int(row["id"]),
+                "task_id": int(row["task_id"]),
+                "level": row["level"],
+                "message": row["message"],
+                "counters": json.loads(row["counters_json"] or "{}"),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
 
     def export_rows(self, include_uncertain: bool = True) -> list[dict[str, Any]]:
         where = "accepted=1 OR uncertain=1" if include_uncertain else "accepted=1"
@@ -503,5 +663,19 @@ class Database:
             "contacts": json.loads(row["contacts_json"]),
             "error": row["error"],
             "discovered_at": row["discovered_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def _task_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": int(row["id"]),
+            "status": row["status"],
+            "config": json.loads(row["config_json"]),
+            "counters": json.loads(row["counters_json"] or "{}"),
+            "current_message": row["current_message"],
+            "error": row["error"],
+            "started_at": row["started_at"],
+            "finished_at": row["finished_at"],
+            "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }

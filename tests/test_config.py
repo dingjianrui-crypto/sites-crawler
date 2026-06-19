@@ -1,6 +1,8 @@
 import os
 
-from nsfw_discovery.config import load_dotenv
+from pathlib import Path
+
+from nsfw_discovery.config import Settings, default_user_agent, load_dotenv
 
 
 def test_load_dotenv_reads_values_without_overriding_existing(tmp_path, monkeypatch) -> None:
@@ -33,3 +35,12 @@ def test_load_dotenv_can_override_existing_values(tmp_path, monkeypatch) -> None
     load_dotenv(env_file, override=True)
 
     assert os.environ["SERPAPI_API_KEY"] == "from-file"
+
+
+def test_default_user_agent_can_be_configured(monkeypatch) -> None:
+    monkeypatch.setenv("NSFW_DISCOVERY_USER_AGENT", "Mozilla/5.0 Custom Browser")
+
+    settings = Settings.from_values(db_path=Path("data/discovery.sqlite"))
+
+    assert default_user_agent() == "Mozilla/5.0 Custom Browser"
+    assert settings.user_agent == "Mozilla/5.0 Custom Browser"
