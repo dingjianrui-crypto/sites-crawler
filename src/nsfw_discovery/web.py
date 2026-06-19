@@ -134,6 +134,17 @@ def create_app(db_path: str | Path) -> FastAPI:
             raise HTTPException(status_code=404, detail="domain not found")
         return HTMLResponse(render_detail(detail))
 
+    @app.post("/domains/{domain}/delete")
+    def delete_domain(domain: str, request: Request) -> Response:
+        with Database(database_path) as db:
+            deleted = db.delete_domain(domain)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="domain not found")
+        referer = request.headers.get("referer") or "/"
+        if f"/domains/{domain}" in referer:
+            referer = "/"
+        return RedirectResponse(referer, status_code=status.HTTP_303_SEE_OTHER)
+
     @app.get("/tasks", response_class=HTMLResponse)
     def tasks_page() -> HTMLResponse:
         with Database(database_path) as db:
@@ -315,13 +326,14 @@ def render_index(
             <th>Description</th>
             <th>Confidence</th>
             <th>Status</th>
-            <th>Contacts</th>
-            <th>Flags</th>
-            <th>Updated</th>
-          </tr>
-        </thead>
-        <tbody>{rows or "<tr><td colspan='7' class='empty'>No records match the current filters.</td></tr>"}</tbody>
-      </table>
+	            <th>Contacts</th>
+	            <th>Flags</th>
+	            <th>Updated</th>
+	            <th>Actions</th>
+	          </tr>
+	        </thead>
+	        <tbody>{rows or "<tr><td colspan='8' class='empty'>No records match the current filters.</td></tr>"}</tbody>
+	      </table>
     </section>
     <nav class="pager">
       <a href="{prev_url}">Previous</a>
@@ -365,10 +377,11 @@ def render_domain_row(item: dict[str, Any]) -> str:
   <td>{escape(item["description"] or item["error"] or "")}</td>
   <td>{escape(item["confidence"])}</td>
   <td>{''.join(badges)}<small>{escape(item["status"])}</small></td>
-  <td>{escape(", ".join(contact_bits) or "-")}</td>
-  <td>{escape(flags or "-")}</td>
-  <td>{escape(item["updated_at"])}</td>
-</tr>"""
+	  <td>{escape(", ".join(contact_bits) or "-")}</td>
+	  <td>{escape(flags or "-")}</td>
+	  <td>{escape(item["updated_at"])}</td>
+	  <td>{delete_domain_form(item["domain"], compact=True)}</td>
+	</tr>"""
 
 
 def render_detail(detail: dict[str, Any]) -> str:
@@ -396,6 +409,7 @@ def render_detail(detail: dict[str, Any]) -> str:
 	<body>
 	  <main>
 	    {render_nav("domains")}
+	    <div class="detail-actions">{delete_domain_form(detail["domain"])}</div>
 	    <header>
 	      <h1>{escape(detail["domain"])}</h1>
       <p>{escape(detail["description"] or detail["error"] or "")}</p>
@@ -590,6 +604,14 @@ def render_contacts(contacts: dict[str, list[str]]) -> str:
     return "".join(blocks)
 
 
+def delete_domain_form(domain: str, compact: bool = False) -> str:
+    label = "Delete" if compact else "Delete Record"
+    confirm = f"Delete {domain} and all related pages/search sources?"
+    return f"""<form class="inline-form" method="post" action="/domains/{escape(domain)}/delete" onsubmit="return confirm('{escape(confirm)}');">
+  <button class="danger" type="submit">{escape(label)}</button>
+</form>"""
+
+
 def render_nav(active: str) -> str:
     return f"""<nav class="top-nav">
   <a class="{active_class(active, "domains")}" href="/">Domains</a>
@@ -683,6 +705,9 @@ body { margin: 0; background: #f6f7f9; color: #20242a; }
 	.button-link { background: #1469c8; color: white; border-color: #1469c8; }
 	.wide { grid-column: 1 / -1; }
 	.form-actions { display: flex; gap: 10px; }
+	.inline-form { display: inline; margin: 0; }
+	.detail-actions { display: flex; justify-content: flex-end; margin-bottom: 10px; }
+	.danger { background: #b42318; border-color: #b42318; color: white; }
 	.error { padding: 10px 12px; border: 1px solid #f1b8b8; background: #fff4f4; border-radius: 8px; color: #a12f2f; }
 	.table-wrap { background: white; border: 1px solid #dfe3e8; border-radius: 8px; overflow: auto; }
 .table-meta { display: flex; justify-content: space-between; padding: 12px; color: #66707d; border-bottom: 1px solid #e7ebef; }

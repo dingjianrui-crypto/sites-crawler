@@ -75,6 +75,38 @@ def test_database_upserts_search_sources_without_duplicates(tmp_path) -> None:
     assert detail["search_sources"][0]["snippet"] == "Updated snippet"
 
 
+def test_database_deletes_domain_and_related_rows(tmp_path) -> None:
+    db_path = tmp_path / "discovery.sqlite"
+    with Database(db_path) as db:
+        db.upsert_search_result(
+            SearchResult(
+                query="AI NSFW generator",
+                title="Example",
+                url="https://example.com",
+                snippet="AI adult generator",
+                domain="example.com",
+            )
+        )
+        db.save_page(
+            "example.com",
+            PageContent(
+                url="https://example.com",
+                title="Example",
+                text="AI adult generator",
+                links=[],
+                status_code=200,
+            ),
+        )
+        deleted = db.delete_domain("example.com")
+        detail = db.domain_detail("example.com")
+        source_count = db.conn.execute("SELECT COUNT(*) AS c FROM search_sources").fetchone()["c"]
+        page_count = db.conn.execute("SELECT COUNT(*) AS c FROM pages").fetchone()["c"]
+    assert deleted
+    assert detail is None
+    assert source_count == 0
+    assert page_count == 0
+
+
 def test_database_tracks_discovery_tasks(tmp_path) -> None:
     db_path = tmp_path / "discovery.sqlite"
     with Database(db_path) as db:

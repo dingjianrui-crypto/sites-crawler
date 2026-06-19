@@ -30,6 +30,17 @@ NSFW_TERMS = {
     "nude",
 }
 
+SERVICE_TERMS = {
+    "create",
+    "generate",
+    "generator",
+    "image generation",
+    "chatbot",
+    "companion",
+    "roleplay",
+    "stable diffusion",
+}
+
 HIGH_RISK_TERMS = {
     "minor",
     "underage",
@@ -78,8 +89,12 @@ class LlmClient:
                         "You classify public website metadata. Return only JSON with keys: "
                         "provides_ai_nsfw boolean, description string, confidence one of "
                         "high/medium/low, flags array of strings, accepted boolean, uncertain boolean. "
-                        "Accept adult AI NSFW businesses. Flag illegal, minor-related, or "
-                        "non-consensual indicators. Do not describe explicit content graphically."
+                        "Accept only websites that directly provide an AI adult/NSFW generation, "
+                        "chatbot, companion, or roleplay product. Reject general-purpose portals, "
+                        "news sites, search engines, directories, forums, and social/media platforms "
+                        "unless the fetched metadata clearly shows the site itself provides an AI NSFW "
+                        "product. Flag illegal, minor-related, or non-consensual indicators. Do not "
+                        "describe explicit content graphically."
                     ),
                 },
                 {
@@ -114,7 +129,8 @@ class LlmClient:
             response.raise_for_status()
             data = response.json()
         content = data["choices"][0]["message"]["content"]
-        return parse_classification(content, fallback_domain=domain)
+        classification = parse_classification(content, fallback_domain=domain)
+        return apply_evidence_guard(classification, pages)
 
 
 def parse_classification(raw: str | dict[str, Any], fallback_domain: str = "") -> Classification:
@@ -144,12 +160,40 @@ def parse_classification(raw: str | dict[str, Any], fallback_domain: str = "") -
     )
 
 
+def apply_evidence_guard(classification: Classification, pages: list[PageContent]) -> Classification:
+    if not classification.accepted and not classification.provides_ai_nsfw:
+        return classification
+    if has_ai_nsfw_service_evidence(pages):
+        return classification
+    flags = [*classification.flags, "insufficient_ai_nsfw_evidence"]
+    return Classification(
+        provides_ai_nsfw=False,
+        description=classification.description,
+        confidence="low",
+        flags=flags,
+        accepted=False,
+        uncertain=False,
+    )
+
+
+def has_ai_nsfw_service_evidence(pages: list[PageContent]) -> bool:
+    for page in pages:
+        text = " ".join([page.url, page.title, page.text]).lower()
+        has_ai = any(term in text for term in AI_TERMS)
+        has_nsfw = any(term in text for term in NSFW_TERMS)
+        has_service = any(term in text for term in SERVICE_TERMS)
+        if has_ai and has_nsfw and has_service:
+            return True
+    return False
+
+
 def heuristic_classify(domain: str, pages: list[PageContent]) -> Classification:
     text = " ".join([domain, *(page.title for page in pages), *(page.text for page in pages)]).lower()
     ai_hits = sorted(term for term in AI_TERMS if term in text)
     nsfw_hits = sorted(term for term in NSFW_TERMS if term in text)
+    service_hits = sorted(term for term in SERVICE_TERMS if term in text)
     risk_hits = sorted(term for term in HIGH_RISK_TERMS if term in text)
-    provides = bool(ai_hits and nsfw_hits)
+    provides = bool(ai_hits and nsfw_hits and service_hits)
     if provides and len(ai_hits) >= 2 and len(nsfw_hits) >= 2:
         confidence = "medium"
     elif provides:

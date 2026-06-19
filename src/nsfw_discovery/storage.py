@@ -203,6 +203,12 @@ class Database:
                 (error[:1000], domain),
             )
 
+    def delete_domain(self, domain: str) -> bool:
+        with self.conn:
+            self.conn.execute("DELETE FROM external_candidates WHERE domain=? OR source_domain=?", (domain, domain))
+            cursor = self.conn.execute("DELETE FROM domains WHERE domain=?", (domain,))
+        return cursor.rowcount > 0
+
     def save_page(self, domain: str, page: PageContent) -> None:
         with self.conn:
             self.conn.execute(

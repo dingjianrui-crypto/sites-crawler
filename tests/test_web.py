@@ -55,6 +55,7 @@ def test_dashboard_api_and_html(tmp_path) -> None:
     html = client.get("/")
     assert html.status_code == 200
     assert "example.com" in html.text
+    assert "Delete" in html.text
 
     filtered_html = client.get(
         "/",
@@ -81,6 +82,27 @@ def test_dashboard_api_and_html(tmp_path) -> None:
         },
     )
     assert filtered_api.status_code == 200
+
+
+def test_domain_delete_button_removes_record(tmp_path) -> None:
+    db_path = tmp_path / "discovery.sqlite"
+    with Database(db_path) as db:
+        db.upsert_search_result(
+            SearchResult(
+                query="AI NSFW generator",
+                title="Example",
+                url="https://example.com",
+                snippet="AI adult generator",
+                domain="example.com",
+            )
+        )
+
+    client = TestClient(create_app(db_path))
+    response = client.post("/domains/example.com/delete", follow_redirects=False)
+    assert response.status_code == 303
+
+    detail = client.get("/api/domains/example.com")
+    assert detail.status_code == 404
 
 
 def test_task_pages_and_api(tmp_path) -> None:
