@@ -39,10 +39,10 @@ def create_app(db_path: str | Path) -> FastAPI:
         page_size: int = Query(50, ge=1, le=200),
         status: Optional[str] = None,
         confidence: Optional[str] = None,
-        accepted: Optional[bool] = None,
-        uncertain: Optional[bool] = None,
-        needs_js_review: Optional[bool] = None,
-        has_contact: Optional[str] = Query(None, pattern="^(email|discord|telegram)$"),
+        accepted: Optional[str] = None,
+        uncertain: Optional[str] = None,
+        needs_js_review: Optional[str] = None,
+        has_contact: Optional[str] = None,
         q: Optional[str] = None,
     ) -> dict[str, Any]:
         with Database(database_path) as db:
@@ -51,10 +51,10 @@ def create_app(db_path: str | Path) -> FastAPI:
                 page_size=page_size,
                 status=empty_to_none(status),
                 confidence=empty_to_none(confidence),
-                accepted=accepted,
-                uncertain=uncertain,
-                needs_js_review=needs_js_review,
-                has_contact=has_contact,  # type: ignore[arg-type]
+                accepted=parse_optional_bool(accepted),
+                uncertain=parse_optional_bool(uncertain),
+                needs_js_review=parse_optional_bool(needs_js_review),
+                has_contact=parse_contact_filter(has_contact),
                 search=empty_to_none(q),
             )
 
@@ -95,19 +95,19 @@ def create_app(db_path: str | Path) -> FastAPI:
         page_size: int = Query(50, ge=1, le=200),
         status: Optional[str] = None,
         confidence: Optional[str] = None,
-        accepted: Optional[bool] = None,
-        uncertain: Optional[bool] = None,
-        needs_js_review: Optional[bool] = None,
-        has_contact: Optional[str] = Query(None, pattern="^(email|discord|telegram)$"),
+        accepted: Optional[str] = None,
+        uncertain: Optional[str] = None,
+        needs_js_review: Optional[str] = None,
+        has_contact: Optional[str] = None,
         q: Optional[str] = None,
     ) -> HTMLResponse:
         filters = {
             "status": empty_to_none(status),
             "confidence": empty_to_none(confidence),
-            "accepted": accepted,
-            "uncertain": uncertain,
-            "needs_js_review": needs_js_review,
-            "has_contact": has_contact,
+            "accepted": parse_optional_bool(accepted),
+            "uncertain": parse_optional_bool(uncertain),
+            "needs_js_review": parse_optional_bool(needs_js_review),
+            "has_contact": parse_contact_filter(has_contact),
             "q": empty_to_none(q),
             "page_size": page_size,
         }
@@ -118,10 +118,10 @@ def create_app(db_path: str | Path) -> FastAPI:
                 page_size=page_size,
                 status=filters["status"],
                 confidence=filters["confidence"],
-                accepted=accepted,
-                uncertain=uncertain,
-                needs_js_review=needs_js_review,
-                has_contact=has_contact,  # type: ignore[arg-type]
+                accepted=filters["accepted"],
+                uncertain=filters["uncertain"],
+                needs_js_review=filters["needs_js_review"],
+                has_contact=filters["has_contact"],
                 search=filters["q"],
             )
         return HTMLResponse(render_index(request, stats, listing, filters))
@@ -172,6 +172,24 @@ def empty_to_none(value: str | None) -> str | None:
     if value is None or value == "":
         return None
     return value
+
+
+def parse_optional_bool(value: str | None) -> bool | None:
+    normalized = empty_to_none(value)
+    if normalized is None:
+        return None
+    if normalized.lower() == "true":
+        return True
+    if normalized.lower() == "false":
+        return False
+    return None
+
+
+def parse_contact_filter(value: str | None) -> str | None:
+    normalized = empty_to_none(value)
+    if normalized in {"email", "discord", "telegram"}:
+        return normalized
+    return None
 
 
 async def run_task(db_path: Path, task_id: int) -> None:

@@ -56,6 +56,32 @@ def test_dashboard_api_and_html(tmp_path) -> None:
     assert html.status_code == 200
     assert "example.com" in html.text
 
+    filtered_html = client.get(
+        "/",
+        params={
+            "status": "done",
+            "confidence": "",
+            "has_contact": "",
+            "accepted": "",
+            "uncertain": "",
+            "needs_js_review": "",
+            "page_size": "50",
+        },
+    )
+    assert filtered_html.status_code == 200
+    assert "example.com" in filtered_html.text
+
+    filtered_api = client.get(
+        "/api/domains",
+        params={
+            "has_contact": "",
+            "accepted": "",
+            "uncertain": "",
+            "needs_js_review": "",
+        },
+    )
+    assert filtered_api.status_code == 200
+
 
 def test_task_pages_and_api(tmp_path) -> None:
     db_path = tmp_path / "discovery.sqlite"
