@@ -47,6 +47,34 @@ def test_database_persists_search_page_and_classification(tmp_path) -> None:
     assert detail["pages"][0]["url"] == "https://example.com"
 
 
+def test_database_upserts_search_sources_without_duplicates(tmp_path) -> None:
+    db_path = tmp_path / "discovery.sqlite"
+    with Database(db_path) as db:
+        db.upsert_search_result(
+            SearchResult(
+                query="AI NSFW generator",
+                title="Original",
+                url="https://example.com/tool",
+                snippet="Original snippet",
+                domain="example.com",
+            )
+        )
+        db.upsert_search_result(
+            SearchResult(
+                query="AI NSFW generator",
+                title="Updated",
+                url="https://example.com/tool",
+                snippet="Updated snippet",
+                domain="example.com",
+            )
+        )
+        detail = db.domain_detail("example.com")
+    assert detail is not None
+    assert len(detail["search_sources"]) == 1
+    assert detail["search_sources"][0]["title"] == "Updated"
+    assert detail["search_sources"][0]["snippet"] == "Updated snippet"
+
+
 def test_database_queues_external_candidate_as_pending_domain(tmp_path) -> None:
     db_path = tmp_path / "discovery.sqlite"
     with Database(db_path) as db:

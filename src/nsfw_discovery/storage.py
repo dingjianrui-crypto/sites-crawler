@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS search_sources (
   title TEXT NOT NULL,
   url TEXT NOT NULL,
   snippet TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(domain) REFERENCES domains(domain) ON DELETE CASCADE
 );
@@ -100,8 +101,13 @@ class Database:
             )
             self.conn.execute(
                 """
-                INSERT INTO search_sources(domain, query, title, url, snippet)
-                VALUES(?, ?, ?, ?, ?)
+                INSERT INTO search_sources(domain, query, title, url, snippet, updated_at)
+                VALUES(?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(query, url) DO UPDATE SET
+                  domain=excluded.domain,
+                  title=excluded.title,
+                  snippet=excluded.snippet,
+                  updated_at=CURRENT_TIMESTAMP
                 """,
                 (result.domain, result.query, result.title, result.url, result.snippet),
             )
@@ -393,19 +399,50 @@ class Database:
             )
 
     def _migrate(self) -> None:
-        columns = {
+        domain_columns = {
             row["name"]
             for row in self.conn.execute("PRAGMA table_info(domains)").fetchall()
         }
+        search_source_columns = {
+            row["name"]
+            for row in self.conn.execute("PRAGMA table_info(search_sources)").fetchall()
+        }
         with self.conn:
-            if "discovery_method" not in columns:
+            if "discovery_method" not in domain_columns:
                 self.conn.execute(
                     "ALTER TABLE domains ADD COLUMN discovery_method TEXT NOT NULL DEFAULT 'search'"
                 )
-            if "discovery_depth" not in columns:
+            if "discovery_depth" not in domain_columns:
                 self.conn.execute(
                     "ALTER TABLE domains ADD COLUMN discovery_depth INTEGER NOT NULL DEFAULT 0"
                 )
+            if "updated_at" not in search_source_columns:
+                self.conn.execute(
+                    "ALTER TABLE search_sources ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''"
+                )
+                self.conn.execute(
+                    """
+                    UPDATE search_sources
+                    SET updated_at=created_at
+                    WHERE updated_at=''
+                    """
+                )
+            self.conn.execute(
+                """
+                DELETE FROM search_sources
+                WHERE id NOT IN (
+                  SELECT MAX(id)
+                  FROM search_sources
+                  GROUP BY query, url
+                )
+                """
+            )
+            self.conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_search_sources_query_url
+                ON search_sources(query, url)
+                """
+            )
 
     def _domain_filters(
         self,
