@@ -1,3 +1,5 @@
+import sqlite3
+
 from nsfw_discovery.models import (
     Classification,
     Contacts,
@@ -117,6 +119,55 @@ def test_database_stores_rejected_search_source_without_queueing_domain(tmp_path
     assert source["relevance_score"] == 0
     assert source["relevance_reason"] == "general portal"
     assert source["queued"] == 0
+
+
+def test_database_migrates_search_sources_foreign_key_for_rejected_results(tmp_path) -> None:
+    db_path = tmp_path / "discovery.sqlite"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        PRAGMA foreign_keys=ON;
+        CREATE TABLE domains (
+          domain TEXT PRIMARY KEY,
+          status TEXT NOT NULL DEFAULT 'pending',
+          description TEXT NOT NULL DEFAULT '',
+          confidence TEXT NOT NULL DEFAULT 'unknown',
+          accepted INTEGER NOT NULL DEFAULT 0,
+          uncertain INTEGER NOT NULL DEFAULT 0,
+          needs_js_review INTEGER NOT NULL DEFAULT 0,
+          flags_json TEXT NOT NULL DEFAULT '[]',
+          contacts_json TEXT NOT NULL DEFAULT '{"emails":[],"discord":[],"telegram":[],"other":[]}',
+          error TEXT NOT NULL DEFAULT '',
+          discovered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE search_sources (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          domain TEXT NOT NULL,
+          query TEXT NOT NULL,
+          title TEXT NOT NULL,
+          url TEXT NOT NULL,
+          snippet TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY(domain) REFERENCES domains(domain) ON DELETE CASCADE
+        );
+        """
+    )
+    conn.close()
+
+    with Database(db_path) as db:
+        assert not db.conn.execute("PRAGMA foreign_key_list(search_sources)").fetchall()
+        queued = db.upsert_search_result(
+            SearchResult(
+                query="AI NSFW generator",
+                title="Yahoo Singapore",
+                url="https://sg.yahoo.com",
+                snippet="News, email, search, weather, finance, sports, and consumer content.",
+                domain="yahoo.com",
+            ),
+            SearchScreening(keep=False, reason="general portal"),
+        )
+    assert not queued
 
 
 def test_database_deletes_domain_and_related_rows(tmp_path) -> None:

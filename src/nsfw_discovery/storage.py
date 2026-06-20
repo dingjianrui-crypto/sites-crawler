@@ -648,6 +648,8 @@ class Database:
                 self.conn.execute(
                     "ALTER TABLE search_sources ADD COLUMN queued INTEGER NOT NULL DEFAULT 1"
                 )
+            if self._search_sources_has_domain_fk():
+                self._rebuild_search_sources_without_domain_fk()
             self.conn.execute(
                 """
                 DELETE FROM search_sources
@@ -664,6 +666,43 @@ class Database:
                 ON search_sources(query, url)
                 """
             )
+
+    def _search_sources_has_domain_fk(self) -> bool:
+        rows = self.conn.execute("PRAGMA foreign_key_list(search_sources)").fetchall()
+        return any(row["table"] == "domains" for row in rows)
+
+    def _rebuild_search_sources_without_domain_fk(self) -> None:
+        self.conn.execute("ALTER TABLE search_sources RENAME TO search_sources_old")
+        self.conn.execute(
+            """
+            CREATE TABLE search_sources (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              domain TEXT NOT NULL,
+              query TEXT NOT NULL,
+              title TEXT NOT NULL,
+              url TEXT NOT NULL,
+              snippet TEXT NOT NULL,
+              relevance_score INTEGER NOT NULL DEFAULT 0,
+              relevance_reason TEXT NOT NULL DEFAULT '',
+              queued INTEGER NOT NULL DEFAULT 1,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        self.conn.execute(
+            """
+            INSERT INTO search_sources(
+              id, domain, query, title, url, snippet,
+              relevance_score, relevance_reason, queued, updated_at, created_at
+            )
+            SELECT
+              id, domain, query, title, url, snippet,
+              relevance_score, relevance_reason, queued, updated_at, created_at
+            FROM search_sources_old
+            """
+        )
+        self.conn.execute("DROP TABLE search_sources_old")
 
     def _domain_filters(
         self,
