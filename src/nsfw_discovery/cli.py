@@ -83,8 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--timeout", type=float, default=30.0)
     run.add_argument("--retries", type=int, default=3)
     run.add_argument("--user-agent", default=default_user_agent())
-    run.add_argument("--external-depth", type=int, default=1, help="External-link discovery depth. 0 disables it.")
-    run.add_argument("--external-score-threshold", type=int, default=4)
+    run.add_argument("--external-depth", type=int, default=10, help="External-link discovery depth. 0 disables it.")
     run.add_argument("--max-external-candidates", type=int, default=1000)
     run.add_argument(
         "--env-file",

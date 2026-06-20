@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 class Link:
     url: str
     text: str = ""
+    context: str = ""
 
 
 @dataclass(frozen=True)
@@ -64,3 +65,4 @@ class ExternalCandidate:
     score: int
     reason: str
     depth: int
+    source_context: str = ""

@@ -73,7 +73,6 @@ class Settings:
     retry_count: int
     user_agent: str
     external_depth: int
-    external_score_threshold: int
     max_external_candidates: int
     run_search: bool = True
     retry_errors: bool = True
@@ -102,7 +101,6 @@ class Settings:
             retry_count=getattr(args, "retries"),
             user_agent=getattr(args, "user_agent"),
             external_depth=getattr(args, "external_depth"),
-            external_score_threshold=getattr(args, "external_score_threshold"),
             max_external_candidates=getattr(args, "max_external_candidates"),
         )
 
@@ -120,8 +118,7 @@ class Settings:
         timeout_seconds: float | str = 30.0,
         retry_count: int | str = 3,
         user_agent: str | None = None,
-        external_depth: int | str = 1,
-        external_score_threshold: int | str = 4,
+        external_depth: int | str = 10,
         max_external_candidates: int | str = 1000,
         run_search: bool = True,
         retry_errors: bool = True,
@@ -142,7 +139,6 @@ class Settings:
             retry_count=max(0, int(retry_count)),
             user_agent=user_agent or default_user_agent(),
             external_depth=max(0, int(external_depth)),
-            external_score_threshold=max(0, int(external_score_threshold)),
             max_external_candidates=max(0, int(max_external_candidates)),
             run_search=run_search,
             retry_errors=retry_errors,
@@ -166,8 +162,7 @@ class Settings:
             timeout_seconds=config.get("timeout_seconds", 30.0),  # type: ignore[arg-type]
             retry_count=config.get("retry_count", 3),  # type: ignore[arg-type]
             user_agent=str(config.get("user_agent") or default_user_agent()),
-            external_depth=config.get("external_depth", 1),  # type: ignore[arg-type]
-            external_score_threshold=config.get("external_score_threshold", 4),  # type: ignore[arg-type]
+            external_depth=config.get("external_depth", 10),  # type: ignore[arg-type]
             max_external_candidates=config.get("max_external_candidates", 1000),  # type: ignore[arg-type]
             run_search=bool(config.get("run_search", True)),
             retry_errors=bool(config.get("retry_errors", True)),

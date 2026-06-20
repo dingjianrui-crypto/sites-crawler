@@ -6,12 +6,13 @@ import pytest
 from nsfw_discovery.llm import (
     LlmClient,
     apply_evidence_guard,
+    heuristic_screen_external_candidate,
     heuristic_screen_search_result,
     heuristic_classify,
     parse_classification,
     parse_search_screening,
 )
-from nsfw_discovery.models import Contacts, PageContent, SearchResult
+from nsfw_discovery.models import Contacts, ExternalCandidate, PageContent, SearchResult
 
 
 def test_parse_classification_accepts_medium_ai_nsfw() -> None:
@@ -136,6 +137,33 @@ def test_heuristic_screen_search_result_rejects_general_portal() -> None:
     )
     assert not heuristic_screen_search_result(yahoo).keep
     assert heuristic_screen_search_result(generator).keep
+
+
+def test_heuristic_screen_external_candidate_uses_source_context() -> None:
+    unrelated = ExternalCandidate(
+        domain="example.com",
+        url="https://example.com/pricing",
+        source_domain="seed.com",
+        source_url="https://seed.com/tools",
+        anchor_text="AI partner",
+        score=4,
+        reason="ai_terms:ai",
+        depth=1,
+        source_context="This is a billing partner for general account management.",
+    )
+    relevant = ExternalCandidate(
+        domain="example.com",
+        url="https://example.com/generator",
+        source_domain="seed.com",
+        source_url="https://seed.com/tools",
+        anchor_text="Partner",
+        score=4,
+        reason="ai_terms:ai;nsfw_terms:adult",
+        depth=1,
+        source_context="This partner provides an uncensored AI image generator for adult content.",
+    )
+    assert not heuristic_screen_external_candidate(unrelated).keep
+    assert heuristic_screen_external_candidate(relevant).keep
 
 
 @pytest.mark.anyio

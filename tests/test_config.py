@@ -44,3 +44,9 @@ def test_default_user_agent_can_be_configured(monkeypatch) -> None:
 
     assert default_user_agent() == "Mozilla/5.0 Custom Browser"
     assert settings.user_agent == "Mozilla/5.0 Custom Browser"
+
+
+def test_default_external_depth_is_ten() -> None:
+    settings = Settings.from_values(db_path=Path("data/discovery.sqlite"))
+
+    assert settings.external_depth == 10

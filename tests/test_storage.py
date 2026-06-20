@@ -266,6 +266,7 @@ def test_database_queues_external_candidate_as_pending_domain(tmp_path) -> None:
                 score=8,
                 reason="ai_terms:ai,generator;nsfw_terms:uncensored",
                 depth=1,
+                source_context="Partner provides an uncensored AI image generator.",
             )
         )
         duplicate = db.upsert_external_candidate(
@@ -278,6 +279,7 @@ def test_database_queues_external_candidate_as_pending_domain(tmp_path) -> None:
                 score=8,
                 reason="ai_terms:ai,generator;nsfw_terms:uncensored",
                 depth=1,
+                source_context="Partner provides an uncensored AI image generator.",
             )
         )
         stats = db.stats()
@@ -287,3 +289,28 @@ def test_database_queues_external_candidate_as_pending_domain(tmp_path) -> None:
     assert pending == ["external.example"]
     assert stats["external_candidates"] == 1
     assert stats["external_queued"] == 1
+
+
+def test_database_stores_rejected_external_candidate_without_pending_domain(tmp_path) -> None:
+    db_path = tmp_path / "discovery.sqlite"
+    with Database(db_path) as db:
+        inserted = db.upsert_external_candidate(
+            ExternalCandidate(
+                domain="external.example",
+                url="https://external.example/pricing",
+                source_domain="seed.example",
+                source_url="https://seed.example/tools",
+                anchor_text="Billing partner",
+                score=0,
+                reason="insufficient_external_link_context",
+                depth=1,
+                source_context="General billing provider for account management.",
+            ),
+            queue=False,
+        )
+        stats = db.stats()
+        pending = db.pending_domains(10)
+    assert not inserted
+    assert pending == []
+    assert stats["external_candidates"] == 1
+    assert stats["external_queued"] == 0

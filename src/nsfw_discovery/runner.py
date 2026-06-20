@@ -7,7 +7,7 @@ from .config import Settings
 from .crawler import HtmlCrawler
 from .extract import extract_contacts
 from .external import discover_external_candidates
-from .llm import LlmClient
+from .llm import LlmClient, with_screening
 from .search import SerpApiClient
 from .storage import Database
 
@@ -140,12 +140,13 @@ async def process_domains(
                         source_domain=domain,
                         pages=pages,
                         depth=current_depth + 1,
-                        score_threshold=settings.external_score_threshold,
                         max_candidates=settings.max_external_candidates,
                     )
                     counters.external_candidates += len(external_candidates)
                     for candidate in external_candidates:
-                        if db.upsert_external_candidate(candidate, queue=True):
+                        screening = await llm.screen_external_candidate(candidate, settings.selected_queries)
+                        screened_candidate = with_screening(candidate, screening)
+                        if db.upsert_external_candidate(screened_candidate, queue=screening.keep):
                             counters.external_queued += 1
                 all_text = " ".join(page.text for page in pages)
                 all_links = [link for page in pages for link in page.links]

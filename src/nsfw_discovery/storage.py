@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS external_candidates (
   source_domain TEXT NOT NULL,
   source_url TEXT NOT NULL,
   anchor_text TEXT NOT NULL,
+  source_context TEXT NOT NULL DEFAULT '',
   score INTEGER NOT NULL,
   reason TEXT NOT NULL,
   depth INTEGER NOT NULL,
@@ -168,11 +169,13 @@ class Database:
             self.conn.execute(
                 """
                 INSERT INTO external_candidates(
-                  domain, url, source_domain, source_url, anchor_text, score, reason, depth, queued
+                  domain, url, source_domain, source_url, anchor_text, source_context,
+                  score, reason, depth, queued
                 )
-                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(domain, source_domain, source_url, url) DO UPDATE SET
                   score=MAX(score, excluded.score),
+                  source_context=excluded.source_context,
                   reason=excluded.reason,
                   queued=MAX(queued, excluded.queued)
                 """,
@@ -182,20 +185,23 @@ class Database:
                     candidate.source_domain,
                     candidate.source_url,
                     candidate.anchor_text,
+                    candidate.source_context[:1000],
                     candidate.score,
                     candidate.reason,
                     candidate.depth,
                     int(queue),
                 ),
             )
-            inserted = self.conn.execute(
-                """
-                INSERT INTO domains(domain, status, discovery_method, discovery_depth)
-                VALUES(?, 'pending', 'external_link', ?)
-                ON CONFLICT(domain) DO NOTHING
-                """,
-                (candidate.domain, candidate.depth),
-            ).rowcount
+            inserted = 0
+            if queue:
+                inserted = self.conn.execute(
+                    """
+                    INSERT INTO domains(domain, status, discovery_method, discovery_depth)
+                    VALUES(?, 'pending', 'external_link', ?)
+                    ON CONFLICT(domain) DO NOTHING
+                    """,
+                    (candidate.domain, candidate.depth),
+                ).rowcount
         return bool(inserted)
 
     def pending_domains(self, limit: int, include_errors: bool = False) -> list[str]:
@@ -586,7 +592,8 @@ class Database:
             dict(candidate)
             for candidate in self.conn.execute(
                 """
-                SELECT source_domain, source_url, url, anchor_text, score, reason, depth, queued, created_at
+                SELECT source_domain, source_url, url, anchor_text, source_context,
+                       score, reason, depth, queued, created_at
                 FROM external_candidates
                 WHERE domain=?
                 ORDER BY score DESC, created_at DESC
@@ -611,6 +618,10 @@ class Database:
         search_source_columns = {
             row["name"]
             for row in self.conn.execute("PRAGMA table_info(search_sources)").fetchall()
+        }
+        external_candidate_columns = {
+            row["name"]
+            for row in self.conn.execute("PRAGMA table_info(external_candidates)").fetchall()
         }
         with self.conn:
             if "discovery_method" not in domain_columns:
@@ -650,6 +661,10 @@ class Database:
                 )
             if self._search_sources_has_domain_fk():
                 self._rebuild_search_sources_without_domain_fk()
+            if "source_context" not in external_candidate_columns:
+                self.conn.execute(
+                    "ALTER TABLE external_candidates ADD COLUMN source_context TEXT NOT NULL DEFAULT ''"
+                )
             self.conn.execute(
                 """
                 DELETE FROM search_sources

@@ -237,8 +237,7 @@ def default_task_config() -> dict[str, Any]:
         "timeout_seconds": 30.0,
         "retry_count": 3,
         "user_agent": default_user_agent(),
-        "external_depth": 1,
-        "external_score_threshold": 4,
+        "external_depth": 10,
         "max_external_candidates": 1000,
         "run_search": True,
         "retry_errors": True,
@@ -265,9 +264,6 @@ def task_config_from_form(form: dict[str, str]) -> dict[str, Any]:
         "retry_count": parse_int(form.get("retry_count"), defaults["retry_count"]),
         "user_agent": form.get("user_agent") or defaults["user_agent"],
         "external_depth": parse_int(form.get("external_depth"), defaults["external_depth"]),
-        "external_score_threshold": parse_int(
-            form.get("external_score_threshold"), defaults["external_score_threshold"]
-        ),
         "max_external_candidates": parse_int(
             form.get("max_external_candidates"), defaults["max_external_candidates"]
         ),
@@ -530,7 +526,6 @@ def render_new_task(config: dict[str, Any], error: str = "") -> str:
       {number_input("timeout_seconds", "Timeout Seconds", config, step="0.5")}
       {number_input("retry_count", "Retries", config)}
       {number_input("external_depth", "External Depth", config)}
-      {number_input("external_score_threshold", "External Score Threshold", config)}
       {number_input("max_external_candidates", "Max External Candidates", config)}
       <label class="wide">User Agent <input name="user_agent" value="{escape(str(config.get("user_agent") or default_user_agent()))}"></label>
       <div class="form-actions wide">

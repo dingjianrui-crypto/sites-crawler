@@ -158,6 +158,9 @@ def test_task_pages_and_api(tmp_path) -> None:
     new_task = client.get("/tasks/new")
     assert new_task.status_code == 200
     assert "AI NSFW generator" in new_task.text
+    assert "name='external_depth'" in new_task.text
+    assert "value='10'" in new_task.text
+    assert "External Score Threshold" not in new_task.text
 
     detail = client.get(f"/tasks/{task_id}")
     assert detail.status_code == 200

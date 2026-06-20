@@ -184,27 +184,25 @@ To crawl only domains discovered from search results, disable external discovery
 --external-depth 0
 ```
 
-By default, one-hop external discovery is enabled:
+By default, external discovery allows up to 10 link-discovery layers:
 
 ```bash
-nsfw-discovery run --external-depth 1
+nsfw-discovery run --external-depth 10
 ```
 
-When enabled, the app reviews outbound links found on crawled pages and scores them as possible same-topic candidate domains. It does not follow every external link.
+When enabled, the app reviews outbound links found on crawled pages as possible same-topic candidate domains. It does not follow every external link.
 
 An external link can become a new pending domain when:
 
 - it points to a different registrable domain
 - it is not a media/static asset URL
 - it is not a denylisted social, payment, CDN, analytics, app store, or support platform domain
-- its URL or anchor text contains AI/adult-topic terms such as `ai`, `generator`, `chatbot`, `nsfw`, `adult`, `uncensored`, `hentai`, or `porn`
-- its score is at least `--external-score-threshold`
+- the context-aware LLM screening step decides the source-page text around the link is relevant to the configured topics
 
 Useful controls:
 
 ```bash
---external-depth 1
---external-score-threshold 4
+--external-depth 10
 --max-external-candidates 1000
 ```
 
@@ -213,8 +211,9 @@ Depth is graph depth:
 - `0`: search result domains only
 - `1`: search result domains may discover external candidates
 - `2`: external candidates may discover another layer of candidates
+- `10`: allows deeper recursive discovery, still bounded by `--max-domains` and `--max-external-candidates`
 
-All external candidates still go through the normal crawl and LLM classification flow. The external-link score only decides whether a domain is worth inspecting.
+Queued external candidates still go through the normal crawl and LLM classification flow. The external-link screening step only decides whether a domain is worth inspecting.
 
 ### Contact Extraction
 
@@ -293,7 +292,7 @@ SQLite is the source of truth. The main tables are:
 - `domains`: one row per normalized domain, including status, description, confidence, contacts, flags, and error state
 - `search_sources`: search queries and result URLs that discovered each domain
 - `pages`: fetched HTML page metadata and text excerpts
-- `external_candidates`: outbound links that were scored as possible same-topic domains
+- `external_candidates`: outbound links that were screened as possible same-topic domains
 
 The final useful fields for each accepted or uncertain domain are:
 
@@ -378,8 +377,7 @@ nsfw-discovery run [parameters]
 | `--timeout` | `30.0` | HTTP timeout in seconds for search and crawl requests. | `--timeout 45` |
 | `--retries` | `3` | Number of retry attempts for failed page fetches. | `--retries 2` |
 | `--user-agent` | Built-in crawler user agent | User-Agent header sent during site crawling. Useful if you want to identify your own crawler/contact URL. | `--user-agent "Mozilla/5.0 (compatible; ResearchBot/1.0)"` |
-| `--external-depth` | `1` | External-link discovery depth. `0` disables external expansion, `1` lets search-discovered domains add external candidates, and `2` allows one more layer. | `--external-depth 0` |
-| `--external-score-threshold` | `4` | Minimum relevance score required for an outbound link to become a candidate domain. Raising this reduces false positives; lowering it increases coverage. | `--external-score-threshold 6` |
+| `--external-depth` | `10` | External-link discovery depth. `0` disables external expansion, `1` lets search-discovered domains add external candidates, and higher values allow deeper recursive discovery bounded by `--max-domains` and `--max-external-candidates`. | `--external-depth 0` |
 | `--max-external-candidates` | `1000` | Maximum number of external candidates collected per crawled domain before dedupe/queueing. | `--max-external-candidates 100` |
 | `--env-file` | `.env` | Environment file loaded before reading API settings. Use an empty string to disable `.env` loading. | `--env-file prod.env` |
 | `--resume` | Disabled | Keeps using the same SQLite database and processes pending/error domains. Existing discovered domains are always reused from SQLite. | `--resume` |
@@ -394,8 +392,7 @@ nsfw-discovery run \
   --max-domains 5000 \
   --max-pages-per-domain 8 \
   --concurrency 10 \
-  --external-depth 1 \
-  --external-score-threshold 4 \
+  --external-depth 10 \
   --max-external-candidates 1000
 ```
 

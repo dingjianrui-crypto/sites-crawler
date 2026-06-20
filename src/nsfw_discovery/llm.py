@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any
 
 import httpx
 
-from .models import Classification, Contacts, PageContent, SearchResult, SearchScreening
+from .models import Classification, Contacts, ExternalCandidate, PageContent, SearchResult, SearchScreening
 
 
 AI_TERMS = {
@@ -182,6 +183,58 @@ class LlmClient:
         content = data["choices"][0]["message"]["content"]
         return parse_search_screening(content)
 
+    async def screen_external_candidate(
+        self,
+        candidate: ExternalCandidate,
+        topics: list[str] | None = None,
+    ) -> SearchScreening:
+        if not self.enabled:
+            return heuristic_screen_external_candidate(candidate)
+
+        payload = {
+            "model": self.model,
+            "temperature": 0,
+            "thinking": {"type": "disabled"},
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You screen outbound links before crawling the target domain. Return only JSON "
+                        "with keys: keep boolean and reason string. Decide whether the linked target is "
+                        "likely to directly provide AI adult/NSFW generation, chatbot, companion, or "
+                        "roleplay services. Use the source page context around the link as the strongest "
+                        "evidence, with URL and anchor text as secondary evidence. Reject links where the "
+                        "context suggests ads, social profiles, payment providers, docs, generic blogs, "
+                        "directories, unrelated tools, or general-purpose websites."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "query_topics": topics or [],
+                            "target_domain": candidate.domain,
+                            "target_url": candidate.url,
+                            "source_domain": candidate.source_domain,
+                            "source_url": candidate.source_url,
+                            "anchor_text": candidate.anchor_text,
+                            "source_context": candidate.source_context,
+                            "prefilter_reason": candidate.reason,
+                        },
+                        ensure_ascii=True,
+                    ),
+                },
+            ],
+        }
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.post(f"{self.base_url}/chat/completions", headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json()
+        content = data["choices"][0]["message"]["content"]
+        return parse_search_screening(content)
+
 
 def parse_classification(raw: str | dict[str, Any], fallback_domain: str = "") -> Classification:
     if isinstance(raw, str):
@@ -242,6 +295,31 @@ def heuristic_screen_search_result(result: SearchResult) -> SearchScreening:
     keep = has_ai and has_nsfw and has_service
     reason = "ai_nsfw_service_terms" if keep else "insufficient_search_result_relevance"
     return SearchScreening(keep=keep, reason=reason)
+
+
+def heuristic_screen_external_candidate(candidate: ExternalCandidate) -> SearchScreening:
+    text = " ".join(
+        [
+            candidate.domain,
+            candidate.url,
+            candidate.anchor_text,
+            candidate.source_context,
+        ]
+    ).lower()
+    has_ai = any(term in text for term in AI_TERMS)
+    has_nsfw = any(term in text for term in NSFW_TERMS)
+    has_service = any(term in text for term in SERVICE_TERMS)
+    keep = has_ai and has_nsfw and has_service
+    reason = "context_ai_nsfw_service_terms" if keep else "insufficient_external_link_context"
+    return SearchScreening(keep=keep, reason=reason)
+
+
+def with_screening(candidate: ExternalCandidate, screening: SearchScreening) -> ExternalCandidate:
+    return replace(
+        candidate,
+        score=10 if screening.keep else 0,
+        reason=screening.reason or candidate.reason,
+    )
 
 
 def apply_evidence_guard(classification: Classification, pages: list[PageContent]) -> Classification:

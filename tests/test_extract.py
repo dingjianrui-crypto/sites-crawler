@@ -7,7 +7,9 @@ def test_parse_html_extracts_title_text_and_links() -> None:
       <head><title>Example AI</title><script>ignored()</script></head>
       <body>
         <h1>AI adult generator</h1>
+        <p>Compare partner services for uncensored AI images.
         <a href="/contact">Contact</a>
+        and read more details.</p>
       </body>
     </html>
     """
@@ -17,6 +19,7 @@ def test_parse_html_extracts_title_text_and_links() -> None:
     assert links == ["https://example.com/contact"]
     assert link_details[0].url == "https://example.com/contact"
     assert link_details[0].text == "Contact"
+    assert "uncensored AI images" in link_details[0].context
 
 
 def test_extract_contacts_from_text_and_links() -> None:

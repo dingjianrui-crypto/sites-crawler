@@ -41,8 +41,8 @@ class TextLinkParser(HTMLParser):
         self.title_parts: list[str] = []
         self.text_parts: list[str] = []
         self.links: list[str] = []
-        self.link_details: list[Link] = []
-        self._active_links: list[tuple[str, list[str]]] = []
+        self.link_details: list[tuple[str, str, int]] = []
+        self._active_links: list[tuple[str, list[str], int]] = []
         self._skip_depth = 0
         self._in_title = False
 
@@ -58,7 +58,7 @@ class TextLinkParser(HTMLParser):
             if href:
                 absolute_url = urljoin(self.base_url, href)
                 self.links.append(absolute_url)
-                self._active_links.append((absolute_url, []))
+                self._active_links.append((absolute_url, [], len(self.text)))
         if tag in {"p", "div", "section", "article", "br", "li", "h1", "h2", "h3", "footer"}:
             self.text_parts.append(" ")
 
@@ -66,9 +66,9 @@ class TextLinkParser(HTMLParser):
         if tag in {"script", "style", "noscript", "svg", "canvas"} and self._skip_depth:
             self._skip_depth -= 1
         if tag == "a" and self._active_links:
-            url, text_parts = self._active_links.pop()
+            url, text_parts, context_start = self._active_links.pop()
             anchor_text = " ".join(" ".join(text_parts).split()).strip()
-            self.link_details.append(Link(url=url, text=anchor_text))
+            self.link_details.append((url, anchor_text, context_start))
         if tag == "title":
             self._in_title = False
 
@@ -92,11 +92,24 @@ class TextLinkParser(HTMLParser):
     def text(self) -> str:
         return " ".join(" ".join(self.text_parts).split()).strip()
 
+    def links_with_context(self) -> list[Link]:
+        text = self.text
+        return [
+            Link(url=url, text=anchor_text, context=surrounding_context(text, context_start, anchor_text))
+            for url, anchor_text, context_start in self.link_details
+        ]
+
 
 def parse_html(html: str, base_url: str) -> tuple[str, str, list[str], list[Link]]:
     parser = TextLinkParser(base_url)
     parser.feed(html)
-    return parser.title, parser.text, dedupe_preserve_order(parser.links), dedupe_links(parser.link_details)
+    return parser.title, parser.text, dedupe_preserve_order(parser.links), dedupe_links(parser.links_with_context())
+
+
+def surrounding_context(text: str, start: int, anchor_text: str, radius: int = 350) -> str:
+    left = max(0, start - radius)
+    right = min(len(text), start + len(anchor_text) + radius)
+    return " ".join(text[left:right].split()).strip()
 
 
 def dedupe_preserve_order(values: list[str]) -> list[str]:
