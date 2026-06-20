@@ -33,6 +33,7 @@ def test_dashboard_api_and_html(tmp_path) -> None:
                 provides_ai_nsfw=True,
                 description="Adult AI image generation platform.",
                 confidence="medium",
+                relevance_score=5,
                 accepted=True,
             ),
             Contacts(emails=["support@example.com"]),
@@ -55,6 +56,7 @@ def test_dashboard_api_and_html(tmp_path) -> None:
     html = client.get("/")
     assert html.status_code == 200
     assert "example.com" in html.text
+    assert "5/10" in html.text
     assert "Delete" in html.text
 
     filtered_html = client.get(
@@ -103,6 +105,41 @@ def test_domain_delete_button_removes_record(tmp_path) -> None:
 
     detail = client.get("/api/domains/example.com")
     assert detail.status_code == 404
+
+
+def test_delete_all_button_removes_all_domain_records(tmp_path) -> None:
+    db_path = tmp_path / "discovery.sqlite"
+    with Database(db_path) as db:
+        db.upsert_search_result(
+            SearchResult(
+                query="AI NSFW generator",
+                title="Example",
+                url="https://example.com",
+                snippet="AI adult generator",
+                domain="example.com",
+            )
+        )
+        db.upsert_search_result(
+            SearchResult(
+                query="AI NSFW generator",
+                title="Second",
+                url="https://second.example",
+                snippet="AI adult generator",
+                domain="second.example",
+            )
+        )
+
+    client = TestClient(create_app(db_path))
+    html = client.get("/")
+    assert html.status_code == 200
+    assert "Delete All Records" in html.text
+
+    response = client.post("/domains/delete-all", follow_redirects=False)
+    assert response.status_code == 303
+
+    domains = client.get("/api/domains")
+    assert domains.status_code == 200
+    assert domains.json()["total"] == 0
 
 
 def test_task_pages_and_api(tmp_path) -> None:

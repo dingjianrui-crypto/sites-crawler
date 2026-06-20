@@ -19,6 +19,12 @@ class SearchResult:
 
 
 @dataclass(frozen=True)
+class SearchScreening:
+    keep: bool
+    reason: str = ""
+
+
+@dataclass(frozen=True)
 class PageContent:
     url: str
     title: str
@@ -42,6 +48,7 @@ class Classification:
     provides_ai_nsfw: bool
     description: str
     confidence: str
+    relevance_score: int = 0
     flags: list[str] = field(default_factory=list)
     accepted: bool = False
     uncertain: bool = False

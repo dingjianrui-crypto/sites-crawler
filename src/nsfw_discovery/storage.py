@@ -5,7 +5,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Literal
 
-from .models import Classification, Contacts, ExternalCandidate, PageContent, SearchResult
+from .models import Classification, Contacts, ExternalCandidate, PageContent, SearchResult, SearchScreening
 
 
 SCHEMA = """
@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS domains (
   discovery_depth INTEGER NOT NULL DEFAULT 0,
   description TEXT NOT NULL DEFAULT '',
   confidence TEXT NOT NULL DEFAULT 'unknown',
+  relevance_score INTEGER NOT NULL DEFAULT 0,
   accepted INTEGER NOT NULL DEFAULT 0,
   uncertain INTEGER NOT NULL DEFAULT 0,
   needs_js_review INTEGER NOT NULL DEFAULT 0,
@@ -36,9 +37,11 @@ CREATE TABLE IF NOT EXISTS search_sources (
   title TEXT NOT NULL,
   url TEXT NOT NULL,
   snippet TEXT NOT NULL,
+  relevance_score INTEGER NOT NULL DEFAULT 0,
+  relevance_reason TEXT NOT NULL DEFAULT '',
+  queued INTEGER NOT NULL DEFAULT 1,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY(domain) REFERENCES domains(domain) ON DELETE CASCADE
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS pages (
@@ -112,28 +115,53 @@ class Database:
     def __exit__(self, *_exc: object) -> None:
         self.close()
 
-    def upsert_search_result(self, result: SearchResult) -> None:
+    def upsert_search_result(
+        self,
+        result: SearchResult,
+        screening: SearchScreening | None = None,
+    ) -> bool:
+        screening = screening or SearchScreening(keep=True, reason="legacy_insert")
+        should_queue = screening.keep
+        screening_score = 10 if should_queue else 0
         with self.conn:
+            if should_queue:
+                self.conn.execute(
+                    """
+                    INSERT INTO domains(domain, status, discovery_method, discovery_depth, relevance_score)
+                    VALUES(?, 'pending', 'search', 0, ?)
+                    ON CONFLICT(domain) DO UPDATE SET
+                      relevance_score=MAX(relevance_score, excluded.relevance_score),
+                      updated_at=CURRENT_TIMESTAMP
+                    """,
+                    (result.domain, screening_score),
+                )
             self.conn.execute(
                 """
-                INSERT INTO domains(domain, status, discovery_method, discovery_depth)
-                VALUES(?, 'pending', 'search', 0)
-                ON CONFLICT(domain) DO UPDATE SET updated_at=CURRENT_TIMESTAMP
-                """,
-                (result.domain,),
-            )
-            self.conn.execute(
-                """
-                INSERT INTO search_sources(domain, query, title, url, snippet, updated_at)
-                VALUES(?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO search_sources(
+                  domain, query, title, url, snippet, relevance_score, relevance_reason, queued, updated_at
+                )
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(query, url) DO UPDATE SET
                   domain=excluded.domain,
                   title=excluded.title,
                   snippet=excluded.snippet,
+                  relevance_score=excluded.relevance_score,
+                  relevance_reason=excluded.relevance_reason,
+                  queued=excluded.queued,
                   updated_at=CURRENT_TIMESTAMP
                 """,
-                (result.domain, result.query, result.title, result.url, result.snippet),
+                (
+                    result.domain,
+                    result.query,
+                    result.title,
+                    result.url,
+                    result.snippet,
+                    screening_score,
+                    screening.reason,
+                    int(should_queue),
+                ),
             )
+        return should_queue
 
     def upsert_external_candidate(self, candidate: ExternalCandidate, queue: bool = True) -> bool:
         with self.conn:
@@ -206,8 +234,16 @@ class Database:
     def delete_domain(self, domain: str) -> bool:
         with self.conn:
             self.conn.execute("DELETE FROM external_candidates WHERE domain=? OR source_domain=?", (domain, domain))
+            self.conn.execute("DELETE FROM search_sources WHERE domain=?", (domain,))
             cursor = self.conn.execute("DELETE FROM domains WHERE domain=?", (domain,))
         return cursor.rowcount > 0
+
+    def delete_all_domains(self) -> int:
+        with self.conn:
+            self.conn.execute("DELETE FROM external_candidates")
+            self.conn.execute("DELETE FROM search_sources")
+            cursor = self.conn.execute("DELETE FROM domains")
+        return cursor.rowcount
 
     def save_page(self, domain: str, page: PageContent) -> None:
         with self.conn:
@@ -255,6 +291,7 @@ class Database:
                 SET status='done',
                     description=?,
                     confidence=?,
+                    relevance_score=?,
                     accepted=?,
                     uncertain=?,
                     needs_js_review=?,
@@ -267,6 +304,7 @@ class Database:
                 (
                     classification.description[:1000],
                     classification.confidence,
+                    int(classification.relevance_score),
                     int(classification.accepted),
                     int(classification.uncertain),
                     int(needs_js_review),
@@ -436,7 +474,7 @@ class Database:
         where = "accepted=1 OR uncertain=1" if include_uncertain else "accepted=1"
         rows = self.conn.execute(
             f"""
-            SELECT domain, description, confidence, accepted, uncertain,
+            SELECT domain, description, confidence, relevance_score, accepted, uncertain,
                    needs_js_review, flags_json, contacts_json, updated_at
             FROM domains
             WHERE {where}
@@ -448,6 +486,7 @@ class Database:
                 "domain": row["domain"],
                 "description": row["description"],
                 "confidence": row["confidence"],
+                "relevance_score": int(row["relevance_score"]),
                 "accepted": bool(row["accepted"]),
                 "uncertain": bool(row["uncertain"]),
                 "needs_js_review": bool(row["needs_js_review"]),
@@ -488,7 +527,7 @@ class Database:
         rows = self.conn.execute(
             f"""
             SELECT domain, status, discovery_method, discovery_depth, description,
-                   confidence, accepted, uncertain, needs_js_review, flags_json,
+                   confidence, relevance_score, accepted, uncertain, needs_js_review, flags_json,
                    contacts_json, error, discovered_at, updated_at
             FROM domains
             {where}
@@ -509,7 +548,7 @@ class Database:
         row = self.conn.execute(
             """
             SELECT domain, status, discovery_method, discovery_depth, description,
-                   confidence, accepted, uncertain, needs_js_review, flags_json,
+                   confidence, relevance_score, accepted, uncertain, needs_js_review, flags_json,
                    contacts_json, error, discovered_at, updated_at
             FROM domains
             WHERE domain=?
@@ -582,6 +621,10 @@ class Database:
                 self.conn.execute(
                     "ALTER TABLE domains ADD COLUMN discovery_depth INTEGER NOT NULL DEFAULT 0"
                 )
+            if "relevance_score" not in domain_columns:
+                self.conn.execute(
+                    "ALTER TABLE domains ADD COLUMN relevance_score INTEGER NOT NULL DEFAULT 0"
+                )
             if "updated_at" not in search_source_columns:
                 self.conn.execute(
                     "ALTER TABLE search_sources ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''"
@@ -592,6 +635,18 @@ class Database:
                     SET updated_at=created_at
                     WHERE updated_at=''
                     """
+                )
+            if "relevance_score" not in search_source_columns:
+                self.conn.execute(
+                    "ALTER TABLE search_sources ADD COLUMN relevance_score INTEGER NOT NULL DEFAULT 0"
+                )
+            if "relevance_reason" not in search_source_columns:
+                self.conn.execute(
+                    "ALTER TABLE search_sources ADD COLUMN relevance_reason TEXT NOT NULL DEFAULT ''"
+                )
+            if "queued" not in search_source_columns:
+                self.conn.execute(
+                    "ALTER TABLE search_sources ADD COLUMN queued INTEGER NOT NULL DEFAULT 1"
                 )
             self.conn.execute(
                 """
@@ -662,6 +717,7 @@ class Database:
             "discovery_depth": int(row["discovery_depth"]),
             "description": row["description"],
             "confidence": row["confidence"],
+            "relevance_score": int(row["relevance_score"]),
             "accepted": bool(row["accepted"]),
             "uncertain": bool(row["uncertain"]),
             "needs_js_review": bool(row["needs_js_review"]),

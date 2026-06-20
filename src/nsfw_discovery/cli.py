@@ -157,6 +157,7 @@ def write_export(rows: list[dict[str, Any]], output: Path, format_name: str) -> 
         "domain",
         "description",
         "confidence",
+        "relevance_score",
         "accepted",
         "uncertain",
         "needs_js_review",

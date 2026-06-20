@@ -145,6 +145,12 @@ def create_app(db_path: str | Path) -> FastAPI:
             referer = "/"
         return RedirectResponse(referer, status_code=status.HTTP_303_SEE_OTHER)
 
+    @app.post("/domains/delete-all")
+    def delete_all_domains() -> Response:
+        with Database(database_path) as db:
+            db.delete_all_domains()
+        return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+
     @app.get("/tasks", response_class=HTMLResponse)
     def tasks_page() -> HTMLResponse:
         with Database(database_path) as db:
@@ -315,16 +321,17 @@ def render_index(
     <section class="stats">{stat_cards}</section>
     {render_filters(filters)}
     <section class="table-wrap">
-      <div class="table-meta">
-        <span>{listing["total"]} records</span>
-        <span>Page {listing["page"]} of {listing["pages"]}</span>
-      </div>
+	      <div class="table-meta">
+	        <span>{listing["total"]} records</span>
+	        <span class="table-actions">Page {listing["page"]} of {listing["pages"]}{delete_all_domains_form()}</span>
+	      </div>
       <table>
         <thead>
           <tr>
             <th>Domain</th>
             <th>Description</th>
             <th>Confidence</th>
+            <th>Score</th>
             <th>Status</th>
 	            <th>Contacts</th>
 	            <th>Flags</th>
@@ -332,7 +339,7 @@ def render_index(
 	            <th>Actions</th>
 	          </tr>
 	        </thead>
-	        <tbody>{rows or "<tr><td colspan='8' class='empty'>No records match the current filters.</td></tr>"}</tbody>
+	        <tbody>{rows or "<tr><td colspan='9' class='empty'>No records match the current filters.</td></tr>"}</tbody>
 	      </table>
     </section>
     <nav class="pager">
@@ -376,6 +383,7 @@ def render_domain_row(item: dict[str, Any]) -> str:
   <td><a href="/domains/{escape(item["domain"])}">{escape(item["domain"])}</a><small>{escape(item["discovery_method"])} d{item["discovery_depth"]}</small></td>
   <td>{escape(item["description"] or item["error"] or "")}</td>
   <td>{escape(item["confidence"])}</td>
+  <td>{int(item["relevance_score"])}/10</td>
   <td>{''.join(badges)}<small>{escape(item["status"])}</small></td>
 	  <td>{escape(", ".join(contact_bits) or "-")}</td>
 	  <td>{escape(flags or "-")}</td>
@@ -417,6 +425,7 @@ def render_detail(detail: dict[str, Any]) -> str:
     <section class="detail-grid">
       <div><span>Status</span><strong>{escape(detail["status"])}</strong></div>
       <div><span>Confidence</span><strong>{escape(detail["confidence"])}</strong></div>
+      <div><span>Score</span><strong>{int(detail["relevance_score"])}/10</strong></div>
       <div><span>Discovery</span><strong>{escape(detail["discovery_method"])} d{detail["discovery_depth"]}</strong></div>
       <div><span>Updated</span><strong>{escape(detail["updated_at"])}</strong></div>
     </section>
@@ -612,10 +621,16 @@ def delete_domain_form(domain: str, compact: bool = False) -> str:
 </form>"""
 
 
+def delete_all_domains_form() -> str:
+    return """<form class="inline-form" method="post" action="/domains/delete-all" onsubmit="return confirm('Delete all domain records, pages, search sources, and external candidates? Task history will be kept.');">
+  <button class="danger" type="submit">Delete All Records</button>
+</form>"""
+
+
 def render_nav(active: str) -> str:
     return f"""<nav class="top-nav">
   <a class="{active_class(active, "domains")}" href="/">Domains</a>
-  <a class="{active_class(active, "tasks")}" href="/tasks">Tasks</a>
+  <a class="{active_class(active, "tasks")}" href="/tasks">Discovery</a>
 </nav>"""
 
 
@@ -710,7 +725,8 @@ body { margin: 0; background: #f6f7f9; color: #20242a; }
 	.danger { background: #b42318; border-color: #b42318; color: white; }
 	.error { padding: 10px 12px; border: 1px solid #f1b8b8; background: #fff4f4; border-radius: 8px; color: #a12f2f; }
 	.table-wrap { background: white; border: 1px solid #dfe3e8; border-radius: 8px; overflow: auto; }
-.table-meta { display: flex; justify-content: space-between; padding: 12px; color: #66707d; border-bottom: 1px solid #e7ebef; }
+.table-meta { display: flex; justify-content: space-between; gap: 12px; padding: 12px; color: #66707d; border-bottom: 1px solid #e7ebef; }
+.table-actions { display: inline-flex; align-items: center; gap: 10px; }
 table { width: 100%; border-collapse: collapse; min-width: 1100px; }
 th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid #edf0f3; font-size: 13px; }
 th { color: #4b5563; background: #fafbfc; }

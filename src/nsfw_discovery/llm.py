@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 
-from .models import Classification, Contacts, PageContent
+from .models import Classification, Contacts, PageContent, SearchResult, SearchScreening
 
 
 AI_TERMS = {
@@ -73,10 +73,12 @@ class LlmClient:
         domain: str,
         pages: list[PageContent],
         contacts: Contacts,
+        topics: list[str] | None = None,
     ) -> Classification:
         if not self.enabled:
             return heuristic_classify(domain, pages)
 
+        query_topics = topics or []
         payload = {
             "model": self.model,
             "temperature": 0,
@@ -88,7 +90,10 @@ class LlmClient:
                     "content": (
                         "You classify public website metadata. Return only JSON with keys: "
                         "provides_ai_nsfw boolean, description string, confidence one of "
-                        "high/medium/low, flags array of strings, accepted boolean, uncertain boolean. "
+                        "high/medium/low, relevance_score integer 0-10, flags array of strings, "
+                        "accepted boolean, uncertain boolean. Grade relevance_score against the user's "
+                        "query topics: 0 means unrelated, 10 means directly matches the queried AI NSFW "
+                        "generation/chatbot/companion topic. Keep domains only when relevance_score >= 3. "
                         "Accept only websites that directly provide an AI adult/NSFW generation, "
                         "chatbot, companion, or roleplay product. Reject general-purpose portals, "
                         "news sites, search engines, directories, forums, and social/media platforms "
@@ -102,6 +107,7 @@ class LlmClient:
                     "content": json.dumps(
                         {
                             "domain": domain,
+                            "query_topics": query_topics,
                             "pages": [
                                 {
                                     "url": page.url,
@@ -132,6 +138,50 @@ class LlmClient:
         classification = parse_classification(content, fallback_domain=domain)
         return apply_evidence_guard(classification, pages)
 
+    async def screen_search_result(self, result: SearchResult) -> SearchScreening:
+        if not self.enabled:
+            return heuristic_screen_search_result(result)
+
+        payload = {
+            "model": self.model,
+            "temperature": 0,
+            "thinking": {"type": "disabled"},
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You screen search results before crawling. Return only JSON with keys: "
+                        "keep boolean and reason string. Decide whether the title, snippet, URL, and "
+                        "domain directly match the query topic. Keep only results likely to be websites "
+                        "that directly provide AI adult/NSFW generation, chatbot, companion, or roleplay "
+                        "services. Reject general-purpose portals, news sites, search engines, directories, "
+                        "forums, and unrelated pages."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "query": result.query,
+                            "domain": result.domain,
+                            "url": result.url,
+                            "title": result.title,
+                            "snippet": result.snippet,
+                        },
+                        ensure_ascii=True,
+                    ),
+                },
+            ],
+        }
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.post(f"{self.base_url}/chat/completions", headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json()
+        content = data["choices"][0]["message"]["content"]
+        return parse_search_screening(content)
+
 
 def parse_classification(raw: str | dict[str, Any], fallback_domain: str = "") -> Classification:
     if isinstance(raw, str):
@@ -142,8 +192,9 @@ def parse_classification(raw: str | dict[str, Any], fallback_domain: str = "") -
     if confidence not in {"high", "medium", "low"}:
         confidence = "low"
     provides = bool(data.get("provides_ai_nsfw"))
-    uncertain = bool(data.get("uncertain")) or (provides and confidence == "low")
-    accepted = bool(data.get("accepted")) or (provides and confidence in {"high", "medium"})
+    relevance_score = parse_relevance_score(data.get("relevance_score"), confidence, provides)
+    accepted = provides and relevance_score >= 5
+    uncertain = bool(data.get("uncertain")) or (provides and 1 <= relevance_score < 5)
     flags = data.get("flags") or []
     if not isinstance(flags, list):
         flags = [str(flags)]
@@ -154,10 +205,43 @@ def parse_classification(raw: str | dict[str, Any], fallback_domain: str = "") -
         provides_ai_nsfw=provides,
         description=description[:1000],
         confidence=confidence,
+        relevance_score=relevance_score,
         flags=[str(flag)[:100] for flag in flags],
         accepted=accepted,
         uncertain=uncertain,
     )
+
+
+def parse_relevance_score(value: object, confidence: str, provides: bool) -> int:
+    if value is not None:
+        try:
+            return min(10, max(0, int(value)))
+        except (TypeError, ValueError):
+            pass
+    if not provides:
+        return 0
+    return {"high": 8, "medium": 5, "low": 3}.get(confidence, 0)
+
+
+def parse_search_screening(raw: str | dict[str, Any]) -> SearchScreening:
+    if isinstance(raw, str):
+        data = json.loads(raw)
+    else:
+        data = raw
+    return SearchScreening(
+        keep=bool(data.get("keep")),
+        reason=str(data.get("reason") or "")[:500],
+    )
+
+
+def heuristic_screen_search_result(result: SearchResult) -> SearchScreening:
+    text = " ".join([result.domain, result.url, result.title, result.snippet]).lower()
+    has_ai = any(term in text for term in AI_TERMS)
+    has_nsfw = any(term in text for term in NSFW_TERMS)
+    has_service = any(term in text for term in SERVICE_TERMS)
+    keep = has_ai and has_nsfw and has_service
+    reason = "ai_nsfw_service_terms" if keep else "insufficient_search_result_relevance"
+    return SearchScreening(keep=keep, reason=reason)
 
 
 def apply_evidence_guard(classification: Classification, pages: list[PageContent]) -> Classification:
@@ -170,6 +254,7 @@ def apply_evidence_guard(classification: Classification, pages: list[PageContent
         provides_ai_nsfw=False,
         description=classification.description,
         confidence="low",
+        relevance_score=0,
         flags=flags,
         accepted=False,
         uncertain=False,
@@ -194,10 +279,13 @@ def heuristic_classify(domain: str, pages: list[PageContent]) -> Classification:
     service_hits = sorted(term for term in SERVICE_TERMS if term in text)
     risk_hits = sorted(term for term in HIGH_RISK_TERMS if term in text)
     provides = bool(ai_hits and nsfw_hits and service_hits)
+    relevance_score = 0
     if provides and len(ai_hits) >= 2 and len(nsfw_hits) >= 2:
         confidence = "medium"
+        relevance_score = 5
     elif provides:
         confidence = "low"
+        relevance_score = 3
     else:
         confidence = "low"
     flags = []
@@ -213,7 +301,8 @@ def heuristic_classify(domain: str, pages: list[PageContent]) -> Classification:
             else f"{domain} was discovered as a candidate but was not verified as an AI adult NSFW site."
         ),
         confidence=confidence,
+        relevance_score=relevance_score,
         flags=flags,
-        accepted=provides and confidence == "medium" and not risk_hits,
-        uncertain=provides and (confidence == "low" or bool(risk_hits)),
+        accepted=provides and relevance_score >= 5 and not risk_hits,
+        uncertain=provides and (relevance_score < 5 or bool(risk_hits)),
     )

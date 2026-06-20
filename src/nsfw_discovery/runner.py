@@ -82,14 +82,23 @@ async def discover(
     counters: RunCounters,
 ) -> int:
     client = SerpApiClient(settings.serpapi_api_key or "", timeout=settings.timeout_seconds)
+    llm = LlmClient(
+        base_url=settings.llm_base_url,
+        api_key=settings.llm_api_key,
+        model=settings.llm_model,
+        timeout=max(20.0, settings.timeout_seconds),
+    )
     for query in settings.selected_queries:
         reporter.update(f"Searching: {query}", counters)
         try:
             results = await client.search(query, settings.results_per_query)
+            queued = 0
             for result in results:
-                db.upsert_search_result(result)
+                screening = await llm.screen_search_result(result)
+                if db.upsert_search_result(result, screening):
+                    queued += 1
             counters.search_results += len(results)
-            reporter.update(f"Stored {len(results)} results for query", counters)
+            reporter.update(f"Stored {len(results)} results for query; queued {queued}", counters)
         except Exception as exc:  # noqa: BLE001
             counters.errors += 1
             reporter.update(f"Search failed for {query}: {exc}", counters)
@@ -142,7 +151,7 @@ async def process_domains(
                 all_links = [link for page in pages for link in page.links]
                 contacts = extract_contacts(all_text, all_links)
                 db.mark_classifying(domain)
-                classification = await llm.classify(domain, pages, contacts)
+                classification = await llm.classify(domain, pages, contacts, settings.selected_queries)
                 needs_js_review = any(page.needs_js_review for page in pages)
                 db.save_classification(domain, classification, contacts, needs_js_review)
                 counters.domains_processed += 1
