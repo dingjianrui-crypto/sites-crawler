@@ -59,6 +59,37 @@ def test_database_persists_search_page_and_classification(tmp_path) -> None:
     assert detail["pages"][0]["url"] == "https://example.com"
 
 
+def test_database_filters_domains_by_relevance_score(tmp_path) -> None:
+    db_path = tmp_path / "discovery.sqlite"
+    with Database(db_path) as db:
+        for domain, score in [("low.example", 3), ("mid.example", 5), ("high.example", 9)]:
+            db.upsert_search_result(
+                SearchResult(
+                    query="AI NSFW generator",
+                    title=domain,
+                    url=f"https://{domain}",
+                    snippet="AI adult generator",
+                    domain=domain,
+                )
+            )
+            db.save_classification(
+                domain,
+                Classification(
+                    provides_ai_nsfw=score >= 5,
+                    description=f"{domain} description",
+                    confidence="medium",
+                    relevance_score=score,
+                    accepted=score >= 5,
+                ),
+                Contacts(),
+                needs_js_review=False,
+            )
+        listing = db.list_domains(min_score=5, max_score=9)
+
+    assert listing["total"] == 2
+    assert [item["domain"] for item in listing["items"]] == ["high.example", "mid.example"]
+
+
 def test_database_upserts_search_sources_without_duplicates(tmp_path) -> None:
     db_path = tmp_path / "discovery.sqlite"
     with Database(db_path) as db:

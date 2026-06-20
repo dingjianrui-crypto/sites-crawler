@@ -513,6 +513,8 @@ class Database:
         uncertain: bool | None = None,
         needs_js_review: bool | None = None,
         has_contact: Literal["email", "discord", "telegram"] | None = None,
+        min_score: int | None = None,
+        max_score: int | None = None,
         search: str | None = None,
     ) -> dict[str, Any]:
         page = max(1, page)
@@ -524,6 +526,8 @@ class Database:
             uncertain=uncertain,
             needs_js_review=needs_js_review,
             has_contact=has_contact,
+            min_score=min_score,
+            max_score=max_score,
             search=search,
         )
         total = self.conn.execute(
@@ -727,6 +731,8 @@ class Database:
         uncertain: bool | None = None,
         needs_js_review: bool | None = None,
         has_contact: Literal["email", "discord", "telegram"] | None = None,
+        min_score: int | None = None,
+        max_score: int | None = None,
         search: str | None = None,
     ) -> tuple[str, list[Any]]:
         clauses: list[str] = []
@@ -755,6 +761,12 @@ class Database:
         elif has_contact == "telegram":
             clauses.append("contacts_json LIKE ?")
             params.append('%"telegram": ["_%')
+        if min_score is not None:
+            clauses.append("relevance_score >= ?")
+            params.append(max(0, min(10, int(min_score))))
+        if max_score is not None:
+            clauses.append("relevance_score <= ?")
+            params.append(max(0, min(10, int(max_score))))
         if search:
             clauses.append("(domain LIKE ? OR description LIKE ? OR contacts_json LIKE ?)")
             pattern = f"%{search}%"

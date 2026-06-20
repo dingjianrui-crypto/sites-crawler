@@ -39,6 +39,28 @@ def test_dashboard_api_and_html(tmp_path) -> None:
             Contacts(emails=["support@example.com"]),
             needs_js_review=False,
         )
+        db.upsert_search_result(
+            SearchResult(
+                query="AI NSFW generator",
+                title="Low",
+                url="https://low.example",
+                snippet="Candidate",
+                domain="low.example",
+            )
+        )
+        db.save_classification(
+            "low.example",
+            Classification(
+                provides_ai_nsfw=True,
+                description="Lower relevance candidate.",
+                confidence="low",
+                relevance_score=3,
+                accepted=False,
+                uncertain=True,
+            ),
+            Contacts(),
+            needs_js_review=False,
+        )
 
     client = TestClient(create_app(db_path))
     stats = client.get("/api/stats")
@@ -49,6 +71,11 @@ def test_dashboard_api_and_html(tmp_path) -> None:
     assert domains.status_code == 200
     assert domains.json()["items"][0]["domain"] == "example.com"
 
+    score_filtered = client.get("/api/domains", params={"min_score": "5"})
+    assert score_filtered.status_code == 200
+    assert score_filtered.json()["total"] == 1
+    assert score_filtered.json()["items"][0]["domain"] == "example.com"
+
     detail = client.get("/api/domains/example.com")
     assert detail.status_code == 200
     assert detail.json()["contacts"]["emails"] == ["support@example.com"]
@@ -56,8 +83,15 @@ def test_dashboard_api_and_html(tmp_path) -> None:
     html = client.get("/")
     assert html.status_code == 200
     assert "example.com" in html.text
+    assert "Min Score" in html.text
+    assert "Max Score" in html.text
     assert "5/10" in html.text
     assert "Delete" in html.text
+
+    score_filtered_html = client.get("/", params={"min_score": "5", "max_score": "10"})
+    assert score_filtered_html.status_code == 200
+    assert "example.com" in score_filtered_html.text
+    assert "low.example" not in score_filtered_html.text
 
     filtered_html = client.get(
         "/",
@@ -68,6 +102,8 @@ def test_dashboard_api_and_html(tmp_path) -> None:
             "accepted": "",
             "uncertain": "",
             "needs_js_review": "",
+            "min_score": "",
+            "max_score": "",
             "page_size": "50",
         },
     )

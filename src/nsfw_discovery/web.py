@@ -43,8 +43,12 @@ def create_app(db_path: str | Path) -> FastAPI:
         uncertain: Optional[str] = None,
         needs_js_review: Optional[str] = None,
         has_contact: Optional[str] = None,
+        min_score: Optional[str] = None,
+        max_score: Optional[str] = None,
         q: Optional[str] = None,
     ) -> dict[str, Any]:
+        score_min = parse_optional_int(min_score)
+        score_max = parse_optional_int(max_score)
         with Database(database_path) as db:
             return db.list_domains(
                 page=page,
@@ -55,6 +59,8 @@ def create_app(db_path: str | Path) -> FastAPI:
                 uncertain=parse_optional_bool(uncertain),
                 needs_js_review=parse_optional_bool(needs_js_review),
                 has_contact=parse_contact_filter(has_contact),
+                min_score=score_min,
+                max_score=score_max,
                 search=empty_to_none(q),
             )
 
@@ -99,6 +105,8 @@ def create_app(db_path: str | Path) -> FastAPI:
         uncertain: Optional[str] = None,
         needs_js_review: Optional[str] = None,
         has_contact: Optional[str] = None,
+        min_score: Optional[str] = None,
+        max_score: Optional[str] = None,
         q: Optional[str] = None,
     ) -> HTMLResponse:
         filters = {
@@ -108,6 +116,8 @@ def create_app(db_path: str | Path) -> FastAPI:
             "uncertain": parse_optional_bool(uncertain),
             "needs_js_review": parse_optional_bool(needs_js_review),
             "has_contact": parse_contact_filter(has_contact),
+            "min_score": parse_optional_int(min_score),
+            "max_score": parse_optional_int(max_score),
             "q": empty_to_none(q),
             "page_size": page_size,
         }
@@ -122,6 +132,8 @@ def create_app(db_path: str | Path) -> FastAPI:
                 uncertain=filters["uncertain"],
                 needs_js_review=filters["needs_js_review"],
                 has_contact=filters["has_contact"],
+                min_score=filters["min_score"],
+                max_score=filters["max_score"],
                 search=filters["q"],
             )
         return HTMLResponse(render_index(request, stats, listing, filters))
@@ -200,6 +212,17 @@ def parse_optional_bool(value: str | None) -> bool | None:
     if normalized.lower() == "false":
         return False
     return None
+
+
+def parse_optional_int(value: str | None, min_value: int = 0, max_value: int = 10) -> int | None:
+    normalized = empty_to_none(value)
+    if normalized is None:
+        return None
+    try:
+        parsed = int(normalized)
+    except ValueError:
+        return None
+    return max(min_value, min(max_value, parsed))
 
 
 def parse_contact_filter(value: str | None) -> str | None:
@@ -356,6 +379,8 @@ def render_filters(filters: dict[str, Any]) -> str:
   <label>Accepted {select_bool("accepted", filters.get("accepted"))}</label>
   <label>Uncertain {select_bool("uncertain", filters.get("uncertain"))}</label>
   <label>Needs JS {select_bool("needs_js_review", filters.get("needs_js_review"))}</label>
+  <label>Min Score <input name="min_score" type="number" min="0" max="10" value="{score_filter_value(filters.get("min_score"))}"></label>
+  <label>Max Score <input name="max_score" type="number" min="0" max="10" value="{score_filter_value(filters.get("max_score"))}"></label>
   <label>Page Size <input name="page_size" type="number" min="1" max="200" value="{int(filters.get("page_size") or 50)}"></label>
   <button type="submit">Apply</button>
   <a class="secondary" href="/">Reset</a>
@@ -666,6 +691,10 @@ def select(name: str, options: list[str], selected: str | None) -> str:
 def select_bool(name: str, selected: bool | None) -> str:
     selected_value = "" if selected is None else str(selected).lower()
     return select(name, ["", "true", "false"], selected_value)
+
+
+def score_filter_value(value: object) -> str:
+    return "" if value is None else escape(str(value))
 
 
 def badge(name: str, enabled: bool) -> str:
